@@ -1,7 +1,7 @@
 #include "includes.h"
 #include "fmod.hpp"
 
-bool _ignoreStop = false;
+gd::PlayLayer* _playLayer = nullptr;
 
 class MusicFadeOut : public CCActionInterval {
 public:
@@ -28,13 +28,15 @@ public:
             target->m_pGlobalChannel->getPitch(&_startPitch);
 
         if(time >= 1.f) {
-            _ignoreStop = false;
+            _playLayer = nullptr;
             target->m_pGlobalChannel->stop();
             target->m_pGlobalChannel->setPitch(_startPitch);
             return;
         }
 
-        target->m_pGlobalChannel->setPitch((1.f - time) * _startPitch);
+        // reversed circular ease out
+        float ease = 1.f - sqrt(1.f - pow(time - 1.f, 2.f));
+        target->m_pGlobalChannel->setPitch(ease * _startPitch);
     }
 
     ~MusicFadeOut() {
@@ -49,9 +51,9 @@ private:
 
 void (__thiscall* PlayLayer_destroyPlayer)(gd::PlayLayer* self, gd::PlayerObject*, gd::GameObject*);
 void __fastcall PlayLayer_destroyPlayer_H(gd::PlayLayer* self, void*, gd::PlayerObject* player, gd::GameObject* obj) {
-    _ignoreStop = true;
+    _playLayer = self;
     PlayLayer_destroyPlayer(self, player, obj);
-    _ignoreStop = false;
+    _playLayer = nullptr;
 }
 
 void (__thiscall* FMODAudioEngine_rewindBackgroundMusic)(gd::FMODAudioEngine* self);
@@ -65,11 +67,22 @@ void __fastcall FMODAudioEngine_rewindBackgroundMusic_H(gd::FMODAudioEngine* sel
 // and i can actually hook this one
 int (__thiscall* ChannelControl_stop_internal)(void*, unsigned int);
 int __fastcall ChannelControl_stop_internal_H(void* self, void*, unsigned int idk) {
-    if(_ignoreStop) {
+    if(_playLayer) {
         auto gm = gd::GameManager::sharedState();
         if(!gm)
             return 0;
-        gm->getActionManager()->addAction(MusicFadeOut::create(0.4f), gd::FMODAudioEngine::sharedEngine(), false);
+
+        float fadeOutTime = 0.5f;
+
+        bool autoRetry = gm->getGameVariable("0026");
+        bool fastPracticeReset = gm->getGameVariable("0052");
+        if(autoRetry && _playLayer->m_isPracticeMode && !fastPracticeReset)
+            fadeOutTime = 1.f;
+
+        if(!autoRetry)
+            fadeOutTime = 2.f;
+
+        gm->getActionManager()->addAction(MusicFadeOut::create(fadeOutTime), gd::FMODAudioEngine::sharedEngine(), false);
         return 0;
     }
     return ChannelControl_stop_internal(self, idk);

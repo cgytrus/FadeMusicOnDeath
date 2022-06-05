@@ -19,17 +19,28 @@ public:
 
     virtual void update(float time) {
         auto target = (gd::FMODAudioEngine*)getTarget();
-        if(!target || target->m_bFading)
+        if(!target || target->m_bFading) {
+            target->stopAction(this);
             return;
+        }
+
         if(_startPitch < 0.f)
             target->m_pGlobalChannel->getPitch(&_startPitch);
+
         if(time >= 1.f) {
             _ignoreStop = false;
             target->m_pGlobalChannel->stop();
             target->m_pGlobalChannel->setPitch(_startPitch);
             return;
         }
+
         target->m_pGlobalChannel->setPitch((1.f - time) * _startPitch);
+    }
+
+    ~MusicFadeOut() {
+        auto target = (gd::FMODAudioEngine*)getTarget();
+        if(target && _startPitch >= 0.f)
+            target->m_pGlobalChannel->setPitch(_startPitch);
     }
 
 private:
@@ -41,6 +52,12 @@ void __fastcall PlayLayer_destroyPlayer_H(gd::PlayLayer* self, void*, gd::Player
     _ignoreStop = true;
     PlayLayer_destroyPlayer(self, player, obj);
     _ignoreStop = false;
+}
+
+void (__thiscall* FMODAudioEngine_rewindBackgroundMusic)(gd::FMODAudioEngine* self);
+void __fastcall FMODAudioEngine_rewindBackgroundMusic_H(gd::FMODAudioEngine* self) {
+    self->stopAllActions();
+    FMODAudioEngine_rewindBackgroundMusic(self);
 }
 
 // ChannelControl::stop has some kind of protection that doesn't let me hook it
@@ -66,6 +83,9 @@ DWORD WINAPI mainThread(void* hModule) {
 
     MH_CreateHook(reinterpret_cast<void*>(base + 0x20a1a0), PlayLayer_destroyPlayer_H,
         reinterpret_cast<void**>(&PlayLayer_destroyPlayer));
+
+    MH_CreateHook(reinterpret_cast<void*>(base + 0x23f70), FMODAudioEngine_rewindBackgroundMusic_H,
+        reinterpret_cast<void**>(&FMODAudioEngine_rewindBackgroundMusic));
 
     MH_CreateHook(reinterpret_cast<void*>(fmodBase + 0xb1c70), ChannelControl_stop_internal_H,
         reinterpret_cast<void**>(&ChannelControl_stop_internal));

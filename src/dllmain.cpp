@@ -7,24 +7,33 @@ class MusicFadeOut : public CCActionInterval {
 public:
     static MusicFadeOut* create(float d) {
         auto ret = new MusicFadeOut;
-        if(ret->initWithDuration(d)) {
-            ret->autorelease();
-            return ret;
+
+        if(!ret->initWithDuration(d)) {
+            delete ret;
+            return nullptr;
         }
-        delete ret;
-        return nullptr;
+
+        ret->autorelease();
+        return ret;
     }
+
     virtual void update(float time) {
         auto target = (gd::FMODAudioEngine*)getTarget();
         if(!target || target->m_bFading)
             return;
+        if(_startPitch < 0.f)
+            target->m_pGlobalChannel->getPitch(&_startPitch);
         if(time >= 1.f) {
             _ignoreStop = false;
             target->m_pGlobalChannel->stop();
+            target->m_pGlobalChannel->setPitch(_startPitch);
             return;
         }
-        target->m_pGlobalChannel->setPitch(1.f - time);
+        target->m_pGlobalChannel->setPitch((1.f - time) * _startPitch);
     }
+
+private:
+    float _startPitch = -1.f;
 };
 
 void (__thiscall* PlayLayer_destroyPlayer)(gd::PlayLayer* self, gd::PlayerObject*, gd::GameObject*);

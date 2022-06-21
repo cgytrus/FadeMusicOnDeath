@@ -43,6 +43,7 @@ public:
         auto target = (gd::FMODAudioEngine*)getTarget();
         if(target && _startPitch >= 0.f)
             target->m_pGlobalChannel->setPitch(_startPitch);
+        CCActionInterval::stop();
     }
 
 private:
@@ -56,10 +57,10 @@ void __fastcall PlayLayer_destroyPlayer_H(gd::PlayLayer* self, void*, gd::Player
     _playLayer = nullptr;
 }
 
-void (__thiscall* FMODAudioEngine_rewindBackgroundMusic)(gd::FMODAudioEngine* self);
-void __fastcall FMODAudioEngine_rewindBackgroundMusic_H(gd::FMODAudioEngine* self) {
-    self->stopAllActions();
-    FMODAudioEngine_rewindBackgroundMusic(self);
+void (__thiscall* PlayLayer_startMusic)(gd::PlayLayer* self);
+void __fastcall PlayLayer_startMusic_H(gd::PlayLayer* self) {
+    gd::FMODAudioEngine::sharedEngine()->stopAllActions();
+    PlayLayer_startMusic(self);
 }
 
 // ChannelControl::stop has some kind of protection that doesn't let me hook it
@@ -67,25 +68,25 @@ void __fastcall FMODAudioEngine_rewindBackgroundMusic_H(gd::FMODAudioEngine* sel
 // and i can actually hook this one
 int (__thiscall* ChannelControl_stop_internal)(void*, unsigned int);
 int __fastcall ChannelControl_stop_internal_H(void* self, void*, unsigned int idk) {
-    if(_playLayer) {
-        auto gm = gd::GameManager::sharedState();
-        if(!gm)
-            return 0;
+    if(!_playLayer)
+        return ChannelControl_stop_internal(self, idk);
 
-        float fadeOutTime = 0.5f;
-
-        bool autoRetry = gm->getGameVariable("0026");
-        bool fastPracticeReset = gm->getGameVariable("0052");
-        if(autoRetry && _playLayer->m_isPracticeMode && !fastPracticeReset)
-            fadeOutTime = 1.f;
-
-        if(!autoRetry)
-            fadeOutTime = 2.f;
-
-        gm->getActionManager()->addAction(MusicFadeOut::create(fadeOutTime), gd::FMODAudioEngine::sharedEngine(), false);
+    auto gm = gd::GameManager::sharedState();
+    if(!gm)
         return 0;
-    }
-    return ChannelControl_stop_internal(self, idk);
+
+    float fadeOutTime = 0.5f;
+
+    bool autoRetry = gm->getGameVariable("0026");
+    bool fastPracticeReset = gm->getGameVariable("0052");
+    if(autoRetry && _playLayer->m_isPracticeMode && !fastPracticeReset)
+        fadeOutTime = 1.f;
+
+    if(!autoRetry)
+        fadeOutTime = 2.f;
+
+    gm->getActionManager()->addAction(MusicFadeOut::create(fadeOutTime), gd::FMODAudioEngine::sharedEngine(), false);
+    return 0;
 }
 
 DWORD WINAPI mainThread(void* hModule) {
@@ -94,13 +95,16 @@ DWORD WINAPI mainThread(void* hModule) {
     auto base = reinterpret_cast<uintptr_t>(GetModuleHandle(0));
     auto fmodBase = reinterpret_cast<uintptr_t>(GetModuleHandle("fmod.dll"));
 
-    MH_CreateHook(reinterpret_cast<void*>(base + 0x20a1a0), PlayLayer_destroyPlayer_H,
+    MH_CreateHook(reinterpret_cast<void*>(base + 0x20a1a0),
+        reinterpret_cast<void*>(&PlayLayer_destroyPlayer_H),
         reinterpret_cast<void**>(&PlayLayer_destroyPlayer));
 
-    MH_CreateHook(reinterpret_cast<void*>(base + 0x23f70), FMODAudioEngine_rewindBackgroundMusic_H,
-        reinterpret_cast<void**>(&FMODAudioEngine_rewindBackgroundMusic));
+    MH_CreateHook(reinterpret_cast<void*>(base + 0x20c8f0),
+        reinterpret_cast<void*>(&PlayLayer_startMusic_H),
+        reinterpret_cast<void**>(&PlayLayer_startMusic));
 
-    MH_CreateHook(reinterpret_cast<void*>(fmodBase + 0xb1c70), ChannelControl_stop_internal_H,
+    MH_CreateHook(reinterpret_cast<void*>(fmodBase + 0xb1c70),
+        reinterpret_cast<void*>(&ChannelControl_stop_internal_H),
         reinterpret_cast<void**>(&ChannelControl_stop_internal));
 
     MH_EnableHook(MH_ALL_HOOKS);
@@ -109,8 +113,7 @@ DWORD WINAPI mainThread(void* hModule) {
 }
 
 BOOL APIENTRY DllMain(HMODULE handle, DWORD reason, LPVOID reserved) {
-    if(reason == DLL_PROCESS_ATTACH) {
-        CreateThread(0, 0x100, mainThread, handle, 0, 0);
-    }
+    if(reason == DLL_PROCESS_ATTACH)
+        CreateThread(nullptr, 0x100, mainThread, handle, 0, nullptr);
     return TRUE;
 }
